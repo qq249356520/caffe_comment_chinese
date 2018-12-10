@@ -1,0 +1,266 @@
+name: "sample"  #网络名字，随意取
+layer {
+
+  name: "data"  #层名字，随意取
+
+  #类型，如果是Data表数据来源于LevelDB或LMDB根据数据的来源不同，数据层的类型也不同
+  #（ 后面会详细阐述）。一般在练习的时候，我们都是采 用的LevelDB或LMDB数据，因此层类型设置为Data。
+  type: "Data"  
+#如：  
+		#type: "MemoryData"  数据来自于内存  
+		#type: "HDF5Data"    数据来自于HDF5  
+		#type: "ImageData"   数据来自于图片
+		#type: "WindowData"  数据来自于windows
+
+  #top或bottom: 每一层用bottom来输入数据，用top来输出数据。如果只有top没有bottom，
+  #则此层只有输出，没有输入。反之亦然。如果有多个 top或多个bottom，表示有多个blobs数据的输入和输出。
+  #(如接下来的层，变展示了两个top)
+  #data 与 label: 在数据层中，至少有一个命名为data的top。如果有第二个top，一般命名为label。 
+  #这种(data,label)配对是分类模型所必需的。
+  top: "data"
+
+  #include: 一般训练的时候和测试的时候，模型的层是不一样的。
+  #该层（layer）是属于训练阶段的层，还是属于测试阶段的层，需要用include来指定。
+  #如果没有include参数，则表示该层既在训练模型中，又在测试模型中。  
+  include {
+    phase: TRAIN
+  }
+  #Transformations: 数据的预处理，可以将数据变换到定义的范围内。
+  #如设置scale为0.00390625，实际上就是1/255, 即将输入数据由0-255归一化到0-1之间 
+  #具体见下一层
+  transform_param {
+    scale: 0.039215684
+  }
+  data_param {
+    source: "/home/zsy/DeepLearning/caffe/examples/mytest_scale/mnist_train_lmdb"
+    batch_size: 10
+    backend: LMDB
+  }
+}
+
+layer {
+	name: "imagescaled"
+	type: "ImageScale"
+	bottom: "data"
+	top: "imagescaled"
+	image_scale_param {
+	  out_height: 128
+	  out_width: 128
+	  visualize: true
+	}
+}
+layer {
+  name: "cifar"
+  type: "Data"
+  top: "data"
+  top: "label"
+  include {
+    phase: TRAIN
+  }
+transform_param {
+	#其他的数据预处理也在这个地方设置
+    scale: 0.00390625
+    #用一个配置文件来进行均值操作
+    mean_file_size: "examples/cifar10/mean.binaryproto"
+    mirror: 1  # 1表示开启镜像，0表示关闭，也可用ture和false来表示
+    # 剪裁一个 227*227的图块，在训练阶段随机剪裁，在测试阶段从中间裁剪
+    crop_size: 227
+  }
+  #数据部分，根据数据来源不同，来进行不同设置
+  data_param {
+  	#包含数据库的目录名称
+    source: "examples/cifar10/cifar10_train_lmdb"
+    #每次处理的数据个数
+    batch_size: 100
+    #还有两个可选参数，rand_skip：在开始的时候路过某个数据的输入。通常对异步SGD很有用
+    #backend：选择使用什么数据库，默认是leveldb
+    backend: LMDB
+  }
+}
+
+
+layer {   #卷积层
+  name: "conv1" 
+  type: "Convolution"
+  bottom: "data"
+  top: "conv1"
+  param {
+  	#学习率的系数，最终的学习率是这个数乘以solver.prototxt配置文件中的base_lr。
+  	#如果有两个lr，则第一个表示权值的学习率，第二个表示偏置的学习率。一般偏置学习率是权重的两倍。
+    lr_mult: 1
+  }
+  param {
+    lr_mult: 2
+  }
+  #下列param中是卷基层的特有参数
+  convolution_param {
+  	#必须参数
+    num_output: 20
+    kernel_size: 5 #卷积核大小，如果h和w不等需要用kernel_h和kernel_w分别设定
+    #其他参数
+    stride: 1 #默认为1，也可以分别设置 
+    #pad  默认为0 扩充的时候是上下左右对称的
+    weight_filler { #权值初始化
+      type: "xavier" #默认为”constant“即 0 ，很多时候用”xavier“算法，也可以设置为”gaussian“
+    }
+    bias_filler { #偏置初始化
+      type: "constant"
+    }
+    #bias_term:是否开启偏置，默认为true，开启。
+    #group：分组 默认为1。如果大于1，我们限制卷积的连接操作在一个子集内。
+    #如果我们根据图像的通道来分组，那么第i个输出分组只能与第i个输入分组进行连接。
+
+  }
+}
+
+layer {   #池化层
+  name: "pool1"
+  type: "Pooling"
+  bottom: "conv1"
+  top: "pool1"
+  pooling_param { #池化参数
+    pool: MAX #池化方法 MAX AVE STOCHASTIC
+    kernel_size: 2 #池化核
+    stride: 2  #默认为1 一般我们设置为2，即不重叠。
+    #pad：默认0
+  }
+}
+
+
+layer {
+#对一个输入的局部区域进行归一化，达到侧抑制效果。
+  name: "norm1"
+  type: "LRN"
+  bottom: "pool1"
+  top: "norm1"
+  lrn_param { #全部为可选参数
+    local_size: 5 #默认5 如果是跨通道LRN，表示求和通道数。如果是通道内LRN，表示求和的正方形区域。
+    alpha: 0.0001 #默认1
+    beta: 0.75  #默认5
+    #　　norm_region: 默认为ACROSS_CHANNELS。
+    #有两个选择，ACROSS_CHANNELS表示在相邻的通道间求和归一化。
+    #WITHIN_CHANNEL表示在一个通道内部特定的区域内进行求和归一化。与前面的local_size参数对应。
+  }
+}
+
+layer { #sigmoid
+  name: "encode1neuron"
+  bottom: "encode1"
+  top: "encode1neuron"
+  type: "Sigmoid"
+}
+
+layer {
+  name: "relu1"
+  type: "ReLU"
+  bottom: "pool1"
+  top: "pool1"
+  #可选参数
+  #negative_slope：默认0，对标准ReLU进行变化，如果设置了这个值那么数据为负数时需乘以此值
+  #（lacky_ReLU）
+}
+
+layer {
+  name: "layer"
+  bottom: "in"
+  top: "out"
+  type: "TanH"
+}
+
+layer {
+  name: "layer"
+  bottom: "in"
+  top: "out"
+  type: "AbsVal"
+}
+
+layer { #softmax-loss  output loss
+  name: "loss"
+  type: "SoftmaxWithLoss"
+  bottom: "ip1"
+  bottom: "label"
+  top: "loss"
+}
+
+layers { #softmax output 似然prob
+  bottom: "cls3_fc"
+  top: "prob"
+  name: "prob"
+  type: "Softmax"
+}
+
+layer {
+#全连接层，把输入输出都当成向量（把blobs的height和width都变成1）
+#实际上也是一种卷积层，只是它的卷积核大小和原始数据大小一致。因此其参数基本和卷积层的参数一样
+  name: "ip1"
+  type: "InnerProduct"
+  bottom: "pool2"
+  top: "ip1"
+  param {
+    lr_mult: 1
+  }
+  param {
+    lr_mult: 2
+  }
+  inner_product_param {
+    num_output: 500 #必须设置 过滤器（filter）的个数
+    weight_filler {
+      type: "xavier"
+    }
+    bias_filler {
+      type: "constant"
+    }
+  }
+}
+
+layer { #只有测试阶段才有
+  name: "accuracy"
+  type: "Accuracy"
+  bottom: "ip2"
+  bottom: "label"
+  top: "accuracy"
+  include {
+    phase: TEST
+  }
+}
+
+ layer {
+    name: "reshape"
+    type: "Reshape"
+    bottom: "input"
+    top: "output"
+    reshape_param {
+    	#可选参数组 n×c×w×h
+      shape {
+        dim: 0  # copy the dimension from below  即维度不变，经过本层输入和输出相同
+        dim: 2 #将原来的维度变为2
+        dim: 3
+        dim: -1 # infer it from the other dimensions 系统自动计算维度。
+        #数据总量不变，系统根据blob的其他三维来自动计算当前的维度
+      }
+    }
+  }
+
+  #如64*3*28*28图片，经过reshape
+
+reshape_param {
+      shape {
+        dim: 0 
+        dim: 0
+        dim: 14
+        dim: -1 
+      }
+    }
+
+ #输出数据为：64*3*14*56
+
+ layer {
+  name: "drop7"
+  type: "Dropout"
+  bottom: "fc7-conv"
+  top: "fc7-conv"
+  dropout_param {
+  	#设置一个参数即可
+    dropout_ratio: 0.5
+  }
+}

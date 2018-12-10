@@ -1,0 +1,15 @@
+train_net: "/home/zsy/DeepLearning/caffe/examples/myfile/pythonInuse/netCreate/train.prototxt"
+test_net: "/home/zsy/DeepLearning/caffe/examples/myfile/pythonInuse/netCreate/val.prototxt"
+test_iter: 313
+test_interval: 782
+base_lr: 0.001
+display: 782
+max_iter: 78200
+gamma: 0.1
+momentum: 0.9
+weight_decay: 0.0005
+stepsize: 26067
+snapshot: 7820
+snapshot_prefix: "snapshot"
+solver_mode: GPU
+type: "SGD"

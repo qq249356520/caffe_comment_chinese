@@ -1,0 +1,2 @@
+cat.jpg 1
+fish-bike.jpg 2
