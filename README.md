@@ -1,1 +1,1 @@
-一个带有中文注释的caffe框架 （windows）
+一个带有中文注释的caffe框架
